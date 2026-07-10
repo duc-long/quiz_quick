@@ -464,6 +464,10 @@
         <div class="mode-card" onclick="selectMode(2, this)">
           <h4>Shuffle Both</h4><p>Both questions and answers are randomized.</p>
         </div>
+        <div class="mode-card" onclick="selectMode(3, this)" style="border-left: 4px solid var(--primary);">
+          <h4 style="display: flex; align-items: center; gap: 8px;">Learn Mode (FSRS) <span style="background: var(--primary); color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; letter-spacing: 0.5px;">RECOMMENDED</span></h4>
+          <p>Learn new cards in chunks of 10. Automatically schedules reviews for long-term memory (2-day cycle).</p>
+        </div>
       </div>
       <div style="margin-top: 24px; display: flex; flex-direction: column; gap: 12px;">
         <button class="btn btn-primary" onclick="startQuiz()">Start Quiz (New)</button>
@@ -567,7 +571,30 @@
     // --- STATE ---
     let db = [];
     let currentQuizId = null;
-    let currentMode = 0; // 0: Normal, 1: Shuffle Answers, 2: Shuffle Both
+    let currentMode = 0; // 0: Normal, 1: Shuffle Answers, 2: Shuffle Both, 3: Learn (FSRS)
+    
+    // --- FSRS ENGINE ---
+    const FSRS = {
+      rate(card, rating) {
+        if (!card.fsrs) card.fsrs = { state: 0, due: 0, interval: 0 };
+        const now = Date.now();
+        const f = card.fsrs;
+        let next_due = now;
+        let interval = 0;
+        
+        if (f.state === 0) { // New
+          if (rating === 1) { f.state = 1; next_due = now + 1 * 60 * 1000; }
+          else { f.state = 2; interval = 1; next_due = now + interval * 24 * 60 * 60 * 1000; }
+        } else if (f.state === 1 || f.state === 3) { // Learning/Relearning
+          if (rating === 1) { next_due = now + 1 * 60 * 1000; }
+          else { f.state = 2; interval = 1; next_due = now + interval * 24 * 60 * 60 * 1000; }
+        } else if (f.state === 2) { // Review
+          if (rating === 1) { f.state = 3; next_due = now + 1 * 60 * 1000; }
+          else { interval = Math.min(2, f.interval + 1); next_due = now + interval * 24 * 60 * 60 * 1000; }
+        }
+        f.interval = interval; f.due = next_due; return f;
+      }
+    };
     
     // Quiz Execution State
     let quizQuestions = [];
@@ -787,7 +814,22 @@
       localStorage.removeItem('temp_progress_' + currentQuizId);
       
       let qList = JSON.parse(JSON.stringify(questionsSource));
-      if (currentMode === 2) {
+      
+      if (currentMode === 3) {
+        const now = Date.now();
+        let dueCards = qList.filter(q => q.fsrs && q.fsrs.state === 2 && q.fsrs.due <= now);
+        let learningCards = qList.filter(q => q.fsrs && (q.fsrs.state === 1 || q.fsrs.state === 3) && q.fsrs.due <= now);
+        let newCards = qList.filter(q => !q.fsrs || q.fsrs.state === 0).slice(0, 10);
+        qList = [...learningCards, ...dueCards, ...newCards];
+        
+        if (qList.length === 0) {
+          showModal('All Caught Up!', 'You have learned and reviewed all available cards for now. Take a rest and check back later!', 'info');
+          return goHome();
+        }
+        
+        qList = shuffleArray(qList);
+        qList.forEach(q => q.options = shuffleArray(q.options));
+      } else if (currentMode === 2) {
         qList = shuffleArray(qList);
         qList.forEach(q => q.options = shuffleArray(q.options));
       } else if (currentMode === 1) {
@@ -939,6 +981,21 @@
           const originalQuiz = db.find(qz => qz.id === currentQuizId);
           const origQ = originalQuiz.questions.find(oq => oq.id === q.id);
           wrongQuestions.push(origQ);
+        }
+        
+        if (currentMode === 3) {
+          const originalQuiz = db.find(qz => qz.id === currentQuizId);
+          const origQ = originalQuiz.questions.find(oq => oq.id === q.id);
+          const rating = isCorrect ? 3 : 1;
+          FSRS.rate(origQ, rating);
+          saveDb();
+          
+          if (!isCorrect) {
+             const retryCard = JSON.parse(JSON.stringify(q));
+             retryCard.options = shuffleArray(retryCard.options);
+             quizQuestions.push(retryCard);
+             userAnswers.push(null);
+          }
         }
       }
 
