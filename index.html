@@ -302,8 +302,13 @@
       font-size: 20px;
       font-weight: 600;
       line-height: 1.4;
-      margin-bottom: 32px;
+      margin-bottom: 8px;
       white-space: pre-wrap;
+    }
+    .question-hint {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
     }
     .options-grid {
       display: flex;
@@ -527,6 +532,7 @@
       </div>
       <div class="question-container">
         <div class="question-text" id="question-text">Question text goes here?</div>
+        <div class="question-hint" id="question-hint"></div>
         <div class="options-grid" id="options-grid"></div>
       </div>
       <div class="quiz-footer">
@@ -637,7 +643,7 @@
     // Time & Review Tracking
     let startTime = 0;
     let accumulatedTime = 0;
-    let userAnswers = []; // stores selected option id for each question
+    let userAnswers = []; // stores selected option ids for each question
 
     // --- INITIALIZATION ---
     function init() {
@@ -794,7 +800,11 @@
         });
 
         if (options.length >= 2) {
-          parsed.push({ id: index, question: questionText.trim(), options: options, correctId: item.definition.trim().toUpperCase() });
+          const correctIds = [...new Set(item.definition.trim().toUpperCase().split(''))]
+            .filter(id => options.some(option => option.id === id));
+          if (correctIds.length > 0) {
+            parsed.push({ id: index, question: questionText.trim(), options: options, correctIds: correctIds });
+          }
         }
       });
       return parsed;
@@ -989,6 +999,10 @@
       document.getElementById('progress-bar').style.width = `${progressPercent}%`;
       document.getElementById('progress-text').textContent = `${currentQuestionIndex + 1}/${quizQuestions.length}`;
       document.getElementById('question-text').textContent = q.question;
+      const correctIds = getCorrectIds(q);
+      document.getElementById('question-hint').textContent = correctIds.length > 1
+        ? `Select ${correctIds.length} answers`
+        : 'Select 1 answer';
 
       const grid = document.getElementById('options-grid');
       grid.innerHTML = '';
@@ -1006,59 +1020,103 @@
 
       const nextBtn = document.getElementById('next-btn');
       nextBtn.disabled = true;
-      nextBtn.textContent = (currentQuestionIndex === quizQuestions.length - 1) ? 'Finish' : 'Next Question';
+      nextBtn.textContent = correctIds.length > 1 ? 'Check Answer' : 'Next Question';
       
-      if (isResuming && hasAnswered) {
-        const optId = userAnswers[currentQuestionIndex];
+      const selectedIds = getAnswerIds(userAnswers[currentQuestionIndex]);
+      selectedIds.forEach(optId => {
         const btn = document.querySelector(`.option-btn[data-id="${optId}"]`);
-        if (btn) selectOption(btn, optId, true);
+        if (btn) btn.classList.add('selected');
+      });
+
+      if (isResuming && hasAnswered) {
+        gradeCurrentQuestion(selectedIds, true);
       }
     }
 
-    function selectOption(btnElement, optId, isRestore = false) {
-      if (hasAnswered && !isRestore) return;
-      
-      const q = quizQuestions[currentQuestionIndex];
-      const isCorrect = (optId === q.correctId);
+    function selectOption(btnElement, optId) {
+      if (hasAnswered) return;
 
+      let selectedIds = getAnswerIds(userAnswers[currentQuestionIndex]);
+      if (selectedIds.includes(optId)) {
+        selectedIds = selectedIds.filter(id => id !== optId);
+        btnElement.classList.remove('selected');
+      } else {
+        selectedIds.push(optId);
+        btnElement.classList.add('selected');
+      }
+      userAnswers[currentQuestionIndex] = selectedIds;
+      if (getCorrectIds(quizQuestions[currentQuestionIndex]).length === 1) {
+        gradeCurrentQuestion(selectedIds);
+      } else {
+        document.getElementById('next-btn').disabled = selectedIds.length === 0;
+      }
+    }
+
+    function getAnswerIds(answer) {
+      if (Array.isArray(answer)) return answer;
+      if (typeof answer === 'string' && answer) return answer.split('');
+      return [];
+    }
+
+    function getCorrectIds(question) {
+      if (Array.isArray(question.correctIds)) return question.correctIds;
+      if (typeof question.correctId === 'string') return question.correctId.split('');
+      return [];
+    }
+
+    function answersMatch(answer, correct) {
+      const selected = [...new Set(getAnswerIds(answer))].sort();
+      const expected = [...new Set(getAnswerIds(correct))].sort();
+      return selected.length === expected.length && selected.every((id, index) => id === expected[index]);
+    }
+
+    function gradeCurrentQuestion(selectedIds, isRestore = false) {
+      const q = quizQuestions[currentQuestionIndex];
+      const correctIds = getCorrectIds(q);
+      const isCorrect = answersMatch(selectedIds, correctIds);
       if (!isRestore) {
         hasAnswered = true;
-        userAnswers[currentQuestionIndex] = optId;
         if (isCorrect) score++;
         else {
           const originalQuiz = db.find(qz => qz.id === currentQuizId);
           const origQ = originalQuiz.questions.find(oq => oq.id === q.id);
           wrongQuestions.push(origQ);
         }
-        
+
         if (currentMode === 3) {
           const originalQuiz = db.find(qz => qz.id === currentQuizId);
           const origQ = originalQuiz.questions.find(oq => oq.id === q.id);
-          const rating = isCorrect ? 3 : 1;
-          FSRS.rate(origQ, rating);
+          FSRS.rate(origQ, isCorrect ? 3 : 1);
           saveDb();
-          
+
           if (!isCorrect) {
-             const retryCard = JSON.parse(JSON.stringify(q));
-             retryCard.options = shuffleArray(retryCard.options);
-             quizQuestions.push(retryCard);
-             userAnswers.push(null);
+            const retryCard = JSON.parse(JSON.stringify(q));
+            retryCard.options = shuffleArray(retryCard.options);
+            quizQuestions.push(retryCard);
+            userAnswers.push(null);
           }
         }
       }
 
-      const allBtns = document.querySelectorAll('.option-btn');
-      allBtns.forEach(b => {
-        if (b.dataset.id === q.correctId) b.classList.add('correct');
-        else if (b.dataset.id === optId && !isCorrect) b.classList.add('wrong');
-        b.style.cursor = 'default';
+      document.querySelectorAll('.option-btn').forEach(button => {
+        if (correctIds.includes(button.dataset.id)) button.classList.add('correct');
+        else if (selectedIds.includes(button.dataset.id)) button.classList.add('wrong');
+        button.classList.remove('selected');
+        button.style.cursor = 'default';
       });
 
-      document.getElementById('next-btn').disabled = false;
+      const nextBtn = document.getElementById('next-btn');
+      nextBtn.disabled = false;
+      nextBtn.textContent = (currentQuestionIndex === quizQuestions.length - 1) ? 'Finish' : 'Next Question';
     }
 
     function nextQuestion() {
-      if (!hasAnswered) return;
+      if (!hasAnswered) {
+        const selectedIds = getAnswerIds(userAnswers[currentQuestionIndex]);
+        if (selectedIds.length === 0) return;
+        gradeCurrentQuestion(selectedIds);
+        return;
+      }
       currentQuestionIndex++;
       renderQuestion();
     }
@@ -1101,7 +1159,9 @@
 
       quizQuestions.forEach((q, idx) => {
         const userAnswer = userAnswers[idx];
-        const isCorrect = userAnswer === q.correctId;
+        const correctIds = getCorrectIds(q);
+        const selectedIds = getAnswerIds(userAnswer);
+        const isCorrect = answersMatch(selectedIds, correctIds);
 
         const item = document.createElement('div');
         item.className = 'review-item';
@@ -1115,8 +1175,8 @@
           // Make them unclickable
           btnClass += ' disabled';
           
-          if (opt.id === q.correctId) btnClass += ' correct';
-          else if (opt.id === userAnswer && !isCorrect) btnClass += ' wrong';
+          if (correctIds.includes(opt.id)) btnClass += ' correct';
+          else if (selectedIds.includes(opt.id) && !isCorrect) btnClass += ' wrong';
 
           const prefix = currentMode === 0 ? opt.id : labels[optIdx];
           html += `<div class="${btnClass}" style="cursor:default;"><span style="font-weight:700; margin-right:8px;">${prefix}.</span> ${opt.text}</div>`;
