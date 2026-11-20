@@ -4,8 +4,8 @@
   "description": "A modern mobile-first quiz application.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#2563eb",
+  "background_color": "#090d16",
+  "theme_color": "#1e40af",
   "orientation": "portrait",
   "icons": [
     {

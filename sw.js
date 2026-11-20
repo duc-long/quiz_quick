@@ -1,8 +1,8 @@
-const CACHE_NAME = 'quiz-master-v1';
+const CACHE_NAME = 'quiz-master-v2';
 const ASSETS = [
   './index.html',
   './manifest.json',
-  './icon.svg'
+  './logo.png'
 ];
 
 self.addEventListener('install', event => {
